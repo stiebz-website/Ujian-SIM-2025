@@ -277,136 +277,148 @@
 </div>
 
 <script>
-    // 1. Timer Functionality
-    // PERUBAHAN 2: Waktu diset 45 menit (45 * 60 detik)
-    let timeLimit = 45 * 60; 
+    // --- KONFIGURASI ---
+    const TIME_LIMIT_MINUTES = 45; 
+    let timeLimit = TIME_LIMIT_MINUTES * 60; 
     const timerDisplay = document.getElementById('timer');
+    
+    // Variabel untuk mencegah alert muncul berkali-kali
+    let isExamLocked = false; 
 
+    // 1. FUNGSI TIMER MUNDUR
     const countdown = setInterval(() => {
+        if(isExamLocked) return; // Jika sudah terkunci, timer visual berhenti
+
         const minutes = Math.floor(timeLimit / 60);
         let seconds = timeLimit % 60;
-
         seconds = seconds < 10 ? '0' + seconds : seconds;
         timerDisplay.textContent = `Sisa Waktu: ${minutes}:${seconds}`;
 
         if (timeLimit > 0) {
             timeLimit--;
         } else {
-            clearInterval(countdown);
-            alert("Waktu Habis! Jawaban akan otomatis diunduh.");
-            submitExam(); // Auto submit when time is up
+            lockExam("Waktu Habis! Jawaban otomatis dikunci dan diunduh.");
         }
     }, 1000);
 
-    // 2. Submit & Download Functionality (Microsoft Word .doc)
-    function submitExam() {
-        // Ambil Data Mahasiswa
-        const nama = document.getElementById('nama').value;
-        const nim = document.getElementById('nim').value;
+    // 2. FUNGSI REMOTE CONTROL (Cek status.json setiap 15 detik)
+    setInterval(checkRemoteStatus, 15000); 
 
-        if(!nama || !nim) {
+    async function checkRemoteStatus() {
+        if(isExamLocked) return; // Kalau sudah dikunci, tidak perlu cek lagi
+
+        try {
+            // Kita tambah ?t=waktu agar browser TIDAK mengambil cache lama
+            const response = await fetch('status.json?t=' + new Date().getTime());
+            const data = await response.json();
+
+            // Jika di GitHub "aktif" diubah jadi false
+            if (data.aktif === false) {
+                lockExam(data.pesan || "Ujian telah dihentikan oleh Dosen.");
+            }
+        } catch (error) {
+            console.log("Gagal cek status (Mungkin koneksi internet putus)");
+        }
+    }
+
+    // 3. FUNGSI UTAMA: KUNCI UJIAN & DOWNLOAD
+    function lockExam(pesanAlert) {
+        if(isExamLocked) return; // Cegah eksekusi ganda
+        isExamLocked = true;
+        
+        clearInterval(countdown);
+        timerDisplay.textContent = "UJIAN DITUTUP";
+        timerDisplay.style.backgroundColor = "red";
+        timerDisplay.style.color = "white";
+
+        // Matikan semua input
+        const allInputs = document.querySelectorAll('input, textarea');
+        allInputs.forEach(input => {
+            input.disabled = true;
+            input.style.backgroundColor = "#e9ecef";
+        });
+
+        // Matikan tombol
+        const btn = document.querySelector('.btn');
+        if(btn) {
+            btn.disabled = true;
+            btn.innerText = "Ujian Selesai (Terkunci)";
+        }
+
+        alert(pesanAlert);
+        
+        // Auto submit (Download file)
+        submitExam(true); 
+    }
+
+    // 4. FUNGSI SUBMIT (MODIFIKASI AGAR BISA AUTO TANPA VALIDASI)
+    function submitExam(isAuto = false) { 
+        const namaInput = document.getElementById('nama').value;
+        const nimInput = document.getElementById('nim').value;
+
+        // Validasi Manual (Tombol Klik)
+        if (!isAuto && (!namaInput || !nimInput)) {
             alert("Mohon isi Nama dan NIM terlebih dahulu!");
-            // Scroll to top smoothly
             window.scrollTo({top: 0, behavior: 'smooth'});
             return;
         }
 
-        // Konfirmasi
-        const confirmSubmit = confirm("Apakah Anda yakin ingin menyelesaikan ujian? Jawaban akan diunduh ke dalam file Microsoft Word.");
-        if (!confirmSubmit) return;
+        // Jika manual, tanya konfirmasi
+        if (!isAuto) {
+            const confirmSubmit = confirm("Yakin ingin mengumpulkan? Anda tidak bisa mengedit lagi setelah ini.");
+            if (!confirmSubmit) return;
+            // Jika user klik YES manual, kita kunci juga
+            lockExam("Jawaban berhasil dikumpulkan.");
+            // Return di sini karena lockExam akan memanggil submitExam(true) lagi
+            return; 
+        }
 
-        // Membuat Header Dokumen Word (HTML Based)
+        // --- PROSES PEMBUATAN FILE WORD ---
+        // (Gunakan nama default jika kosong karena waktu habis/dimatikan dosen)
+        let finalNama = namaInput || "TANPA_NAMA";
+        let finalNim = nimInput || "000000";
+
         let header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' " +
                      "xmlns:w='urn:schemas-microsoft-com:office:word' " +
                      "xmlns='http://www.w3.org/TR/REC-html40'>" +
-                     "<head><meta charset='utf-8'><title>Lembar Jawaban UAS</title>" +
-                     "<style>" +
-                     "body { font-family: 'Times New Roman', serif; font-size: 12pt; }" +
-                     "h1 { text-align: center; font-size: 16pt; margin-bottom: 5px; }" +
-                     "h2 { text-align: center; font-size: 14pt; margin-top: 0; }" +
-                     "p { margin: 5px 0; }" +
-                     ".identity-table { width: 100%; margin-bottom: 20px; border-bottom: 2px solid black; padding-bottom: 10px; }" +
-                     ".question { font-weight: bold; margin-top: 15px; }" +
-                     ".answer { margin-left: 20px; text-align: justify; }" +
-                     "</style></head><body>";
-
-        let content = header;
-
-        // Header Dokumen (Identitas)
-        content += "<h1>LEMBAR JAWABAN UAS</h1>";
-        content += "<h2>Sistem Informasi Manajemen</h2>";
+                     "<head><meta charset='utf-8'><title>Lembar Jawaban</title></head><body>";
         
-        content += "<div class='identity-table'>";
-        content += "<p><strong>Nama Mahasiswa :</strong> " + nama + "</p>";
-        content += "<p><strong>NIM            :</strong> " + nim + "</p>";
-        content += "<p><strong>Waktu Submit   :</strong> " + new Date().toLocaleString() + "</p>";
-        content += "</div>";
+        let content = header + `<h1 style='text-align:center'>JAWABAN UAS SIM</h1>`;
+        content += `<p><strong>Nama:</strong> ${finalNama}<br><strong>NIM:</strong> ${finalNim}</p><hr>`;
 
-        // Loop untuk mengambil jawaban soal no 1 sampai 10
         for (let i = 1; i <= 10; i++) {
-            // Ambil teks soal
-            const questionElement = document.getElementById(`qtext${i}`);
-            const questionText = questionElement ? questionElement.innerText : `Pertanyaan No. ${i}`;
+            const qElement = document.getElementById(`qtext${i}`);
+            const qText = qElement ? qElement.innerText : `Soal ${i}`;
+            const ansElement = document.getElementsByName(`q${i}`)[0];
+            const ansText = ansElement ? ansElement.value : "";
             
-            const textArea = document.getElementsByName(`q${i}`)[0];
-            const rawAnswer = textArea ? textArea.value : "";
-            const formattedAnswer = rawAnswer.replace(/\n/g, "<br>");
-            
-            content += `<p class='question'>Soal No. ${i}:</p>`;
-            content += `<p><em>${questionText}</em></p>`; 
-            content += `<div class='answer'>${formattedAnswer.trim() ? formattedAnswer : "[TIDAK DIJAWAB]"}</div>`;
-            content += "<hr style='border: 0; border-top: 1px dashed #ccc;'>";
+            content += `<p><strong>Soal ${i}:</strong> ${qText}</p>`;
+            content += `<p><strong>Jawab:</strong><br>${ansText.replace(/\n/g, "<br>") || "[KOSONG]"}</p><br>`;
         }
-
         content += "</body></html>";
 
-        // Proses Pembuatan File Download (.doc)
-        const blob = new Blob(['\ufeff', content], {
-            type: 'application/msword'
-        });
-        
+        const blob = new Blob(['\ufeff', content], {type: 'application/msword'});
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
-        
         link.href = url;
-        const safeNama = nama.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-        link.download = `UAS_SIM_${safeNama}_${nim}.doc`; 
-        
+        link.download = `UAS_SIM_${finalNama.replace(/ /g,"_")}_${finalNim}.doc`;
         document.body.appendChild(link);
         link.click();
-        
         document.body.removeChild(link);
-        
-        alert("Jawaban BERHASIL diunduh sebagai file Word! \n\nCatatan: Jika muncul peringatan saat membuka file di Word, pilih 'Yes' (File aman).");
     }
 
-    // 3. Toggle Answer Key for Lecturer
+    // 5. TOGGLE KUNCI JAWABAN (FITUR DOSEN)
     function toggleKeys() {
-        const password = prompt("Masukkan Password Dosen untuk melihat kunci jawaban (Default: admin):");
+        const password = prompt("Password Dosen:");
         if(password === "admin") {
             const keys = document.querySelectorAll('.answer-key');
-            let isVisible = false;
-            
-            keys.forEach(key => {
-                if (key.style.display === "block") {
-                    key.style.display = "none";
-                    isVisible = false;
-                } else {
-                    key.style.display = "block";
-                    isVisible = true;
-                }
-            });
-
-            if(isVisible) {
-                alert("Mode Dosen Aktif: Kunci Jawaban Ditampilkan.");
-            } else {
-                alert("Mode Dosen Non-Aktif: Kunci Jawaban Disembunyikan.");
-            }
+            keys.forEach(k => k.style.display = (k.style.display === "block") ? "none" : "block");
         } else {
-            alert("Password Salah!");
+            alert("Password Salah");
         }
     }
 </script>
 
 </body>
+
 </html>
